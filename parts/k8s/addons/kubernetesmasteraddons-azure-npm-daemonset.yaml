@@ -71,9 +71,11 @@ spec:
       tolerations:
       - key: CriticalAddonsOnly
         operator: Exists
+      nodeSelector:
+        beta.kubernetes.io/os: linux
       containers:
         - name: azure-npm
-          image: containernetworking/azure-npm:v0.0.2
+          image: containernetworking/azure-npm:v0.0.4
           securityContext:
             privileged: true
           env:

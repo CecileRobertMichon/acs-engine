@@ -24,6 +24,8 @@ ERR_K8S_RUNNING_TIMEOUT=30 # Timeout waiting for k8s cluster to be healthy
 ERR_K8S_DOWNLOAD_TIMEOUT=31 # Timeout waiting for Kubernetes download(s)
 ERR_KUBECTL_NOT_FOUND=32 # kubectl client binary not found on local disk
 ERR_CNI_DOWNLOAD_TIMEOUT=41 # Timeout waiting for CNI download(s)
+ERR_MS_PROD_DEB_DOWNLOAD_TIMEOUT=42 # Timeout waiting for https://packages.microsoft.com/config/ubuntu/16.04/packages-microsoft-prod.deb
+ERR_MS_PROD_DEB_PKG_ADD_FAIL=43 # Failed to add repo pkg file
 ERR_OUTBOUND_CONN_FAIL=50 # Unable to establish outbound connection
 ERR_CUSTOM_SEARCH_DOMAINS_FAIL=80 # Unable to configure custom search domains
 ERR_APT_DAILY_TIMEOUT=98 # Timeout waiting for apt daily updates
@@ -52,6 +54,13 @@ if [ -f /var/run/reboot-required ]; then
     REBOOTREQUIRED=true
 else
     REBOOTREQUIRED=false
+fi
+
+if [ -f /var/log/azure/golden-image-install.complete ]; then
+    echo "detected golden image pre-install"
+    FULLINSTALL=true
+else
+    FULLINSTALL=false
 fi
 
 function testOutboundConnection() {
@@ -153,14 +162,20 @@ function installEtcd() {
     retrycmd_if_failure 10 1 5 sudo etcdctl member update $MEMBER ${ETCD_PEER_URL} || exit $ERR_ETCD_CONFIG_FAIL
 }
 
-function installDeps() {
-    echo `date`,`hostname`, apt-get_update_begin>>/opt/m
-    apt_get_update || exit $ERR_APT_INSTALL_TIMEOUT
-    echo `date`,`hostname`, apt-get_update_end>>/opt/m
+function holdWALinuxAgent() {
     # make sure walinuxagent doesn't get updated in the middle of running this script
     retrycmd_if_failure 20 5 30 apt-mark hold walinuxagent || exit $ERR_HOLD_WALINUXAGENT
+}
+
+function installDeps() {
+    retrycmd_if_failure_no_stats 20 1 5 curl -fsSL https://packages.microsoft.com/config/ubuntu/16.04/packages-microsoft-prod.deb > /tmp/packages-microsoft-prod.deb || exit $ERR_MS_PROD_DEB_DOWNLOAD_TIMEOUT
+    retrycmd_if_failure 60 5 10 dpkg -i /tmp/packages-microsoft-prod.deb || exit $ERR_MS_PROD_DEB_PKG_ADD_FAIL
+    apt_get_update || exit $ERR_APT_UPDATE_TIMEOUT
     # See https://github.com/kubernetes/kubernetes/blob/master/build/debian-hyperkube-base/Dockerfile#L25-L44
-    apt_get_install 20 30 300 apt-transport-https ca-certificates iptables iproute2 ebtables socat util-linux mount ethtool init-system-helpers nfs-common ceph-common conntrack glusterfs-client ipset jq cgroup-lite git pigz xz-utils || exit $ERR_APT_INSTALL_TIMEOUT
+    apt_get_install 20 30 300 apt-transport-https ca-certificates iptables iproute2 ebtables socat util-linux mount ethtool init-system-helpers nfs-common ceph-common conntrack glusterfs-client ipset jq cgroup-lite git pigz xz-utils blobfuse fuse || exit $ERR_APT_INSTALL_TIMEOUT
+}
+
+function ensureRpc() {
     systemctlEnableAndStart rpcbind
     systemctlEnableAndStart rpc-statd
 }
@@ -172,8 +187,6 @@ function installDocker() {
     printf "Package: docker-engine\nPin: version ${DOCKER_ENGINE_VERSION}\nPin-Priority: 550\n" > /etc/apt/preferences.d/docker.pref
     apt_get_update || exit $ERR_APT_UPDATE_TIMEOUT
     apt_get_install 20 30 120 docker-engine || exit $ERR_DOCKER_INSTALL_TIMEOUT
-    echo "ExecStartPost=/sbin/iptables -P FORWARD ACCEPT" >> /etc/systemd/system/docker.service.d/exec_start.conf
-    usermod -aG docker ${ADMINUSER}
 }
 
 function runAptDaily() {
@@ -301,9 +314,11 @@ function installClearContainersRuntime() {
     retrycmd_if_failure_no_stats 20 1 5 curl -fsSL "${repo_uri}/cc-proxy.service.in" > $CC_SERVICE_IN_TMP
     retrycmd_if_failure_no_stats 20 1 5 curl -fsSL "${repo_uri}/cc-proxy.socket.in" > $CC_SOCKET_IN_TMP
     cat $CC_SERVICE_IN_TMP | sed 's#@libexecdir@#/usr/libexec#' > /etc/systemd/system/cc-proxy.service
-    cat $CC_SOCKET_IN_TMP sed 's#@localstatedir@#/var#' > /etc/systemd/system/cc-proxy.socket
+    cat $CC_SOCKET_IN_TMP sed 's#@localstatedir@#/var#' > /etc/systemd/system/cc-proxy.socket	
+}
 
-	# Enable and start Clear Containers proxy service
+function ensureCCProxy() {
+    # Enable and start Clear Containers proxy service
 	echo "Enabling and starting Clear Containers proxy service..."
 	systemctlEnableAndStart cc-proxy
 }
@@ -355,6 +370,8 @@ function ensureContainerd() {
 }
 
 function ensureDocker() {
+    echo "ExecStartPost=/sbin/iptables -P FORWARD ACCEPT" >> /etc/systemd/system/docker.service.d/exec_start.conf
+    usermod -aG docker ${ADMINUSER}
     wait_for_file 600 1 $DOCKER || exit $ERR_FILE_WATCH_TIMEOUT
     systemctlEnableAndStart docker
 }
@@ -511,38 +528,43 @@ if [ -f $CUSTOM_SEARCH_DOMAIN_SCRIPT ]; then
     $CUSTOM_SEARCH_DOMAIN_SCRIPT > /opt/azure/containers/setup-custom-search-domain.log 2>&1 || exit $ERR_CUSTOM_SEARCH_DOMAINS_FAIL
 fi
 
-installDeps
+holdWALinuxAgent
+if $FULLINSTALL; then
+    installDeps
+fi
+ensureRpc
 
 if [[ "$CONTAINER_RUNTIME" == "docker" ]]; then
-    installDocker
+    if $FULLINSTALL; then
+        installDocker
+    fi
     ensureDocker
 fi
 
 configureK8s
 
-configNetworkPlugin
+if $FULLINSTALL; then
+    configNetworkPlugin
+fi
 
 if [[ ! -z "${MASTER_NODE}" ]]; then
-    echo `date`,`hostname`, configAddonsStart>>/opt/m
     configAddons
-    echo `date`,`hostname`, configAddonsDone>>/opt/m
 fi
 
 # containerd needs to be installed before extractHyperkube
 # so runc is present.
-echo `date`,`hostname`, installContainerdStart>>/opt/m
-installContainerd
-echo `date`,`hostname`, extractHyperkubeStart>>/opt/m
-extractHyperkube
-echo `date`,`hostname`, extractHyperkubeDone>>/opt/m
+if $FULLINSTALL; then
+    installContainerd
+    extractHyperkube
+fi
 
 if [[ "$CONTAINER_RUNTIME" == "clear-containers" ]]; then
 	# Ensure we can nest virtualization
 	if grep -q vmx /proc/cpuinfo; then
 		installClearContainersRuntime
+        ensureCCProxy
 	fi
 fi
-echo `date`,`hostname`, ensureContainerdStart>>/opt/m
 ensureContainerd
 
 if [[ ! -z "${MASTER_NODE}" && ! -z "${EnableEncryptionWithExternalKms}" ]]; then

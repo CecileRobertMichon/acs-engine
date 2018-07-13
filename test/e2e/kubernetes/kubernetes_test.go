@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/Azure/acs-engine/pkg/api/common"
@@ -18,8 +17,10 @@ import (
 	"github.com/Azure/acs-engine/test/e2e/kubernetes/job"
 	"github.com/Azure/acs-engine/test/e2e/kubernetes/networkpolicy"
 	"github.com/Azure/acs-engine/test/e2e/kubernetes/node"
+	"github.com/Azure/acs-engine/test/e2e/kubernetes/persistentvolumeclaims"
 	"github.com/Azure/acs-engine/test/e2e/kubernetes/pod"
 	"github.com/Azure/acs-engine/test/e2e/kubernetes/service"
+	"github.com/Azure/acs-engine/test/e2e/kubernetes/storageclass"
 	"github.com/Azure/acs-engine/test/e2e/kubernetes/util"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -67,9 +68,18 @@ var _ = Describe("Azure Container Cluster using the Kubernetes Orchestrator", fu
 		It("should have functional DNS", func() {
 			if !eng.HasWindowsAgents() {
 				if !eng.HasNetworkPolicy("calico") {
-					pod, err := pod.CreatePodFromFile(filepath.Join(WorkloadDir, "dns-liveness.yaml"), "dns-liveness", "default")
-					Expect(err).NotTo(HaveOccurred())
-					running, err := pod.WaitOnReady(5*time.Second, 2*time.Minute)
+					var err error
+					var p *pod.Pod
+					p, err = pod.CreatePodFromFile(filepath.Join(WorkloadDir, "dns-liveness.yaml"), "dns-liveness", "default")
+					if cfg.SoakClusterName == "" {
+						Expect(err).NotTo(HaveOccurred())
+					} else {
+						if err != nil {
+							p, err = pod.Get("dns-liveness", "default")
+							Expect(err).NotTo(HaveOccurred())
+						}
+					}
+					running, err := p.WaitOnReady(5*time.Second, 2*time.Minute)
 					Expect(err).NotTo(HaveOccurred())
 					Expect(running).To(Equal(true))
 				}
@@ -163,30 +173,6 @@ var _ = Describe("Azure Container Cluster using the Kubernetes Orchestrator", fu
 				Expect(err).NotTo(HaveOccurred())
 				Expect(ready).To(Equal(true))
 			}
-		})
-
-		It("should be running the expected version", func() {
-			hasWindows := eng.HasWindowsAgents()
-			version, err := node.Version()
-			Expect(err).NotTo(HaveOccurred())
-
-			var expectedVersion string
-			if eng.ClusterDefinition.Properties.OrchestratorProfile.OrchestratorRelease != "" ||
-				eng.ClusterDefinition.Properties.OrchestratorProfile.OrchestratorVersion != "" {
-				expectedVersion = common.RationalizeReleaseAndVersion(
-					common.Kubernetes,
-					eng.ClusterDefinition.Properties.OrchestratorProfile.OrchestratorRelease,
-					eng.ClusterDefinition.Properties.OrchestratorProfile.OrchestratorVersion,
-					hasWindows)
-			} else {
-				expectedVersion = common.RationalizeReleaseAndVersion(
-					common.Kubernetes,
-					eng.Config.OrchestratorRelease,
-					eng.Config.OrchestratorVersion,
-					hasWindows)
-			}
-			expectedVersionRationalized := strings.Split(expectedVersion, "-")[0] // to account for -alpha and -beta suffixes
-			Expect(version).To(Equal("v" + expectedVersionRationalized))
 		})
 
 		It("should have kube-dns running", func() {
@@ -569,15 +555,9 @@ var _ = Describe("Azure Container Cluster using the Kubernetes Orchestrator", fu
 				Expect(err).NotTo(HaveOccurred())
 				Expect(len(loadTestPods)).To(Equal(numLoadTestPods))
 
-				By("Waiting 3 minutes for load to take effect")
-				// Wait 3 minutes for autoscaler to respond to load
-				time.Sleep(3 * time.Minute)
-
 				By("Ensuring we have more than 1 apache-php pods due to hpa enforcement")
-				phpPods, err = phpApacheDeploy.Pods()
+				_, err = phpApacheDeploy.WaitForReplicas(2, 5*time.Second, cfg.Timeout)
 				Expect(err).NotTo(HaveOccurred())
-				// We should have > 1 pods after autoscale effects
-				Expect(len(phpPods) > 1).To(BeTrue())
 
 				By("Cleaning up after ourselves")
 				err = loadTestDeploy.Delete()
@@ -681,9 +661,13 @@ var _ = Describe("Azure Container Cluster using the Kubernetes Orchestrator", fu
 				Expect(err).NotTo(HaveOccurred())
 				Expect(running).To(Equal(true))
 				restarts := pod.Status.ContainerStatuses[0].RestartCount
-				err = pod.Delete()
-				Expect(err).NotTo(HaveOccurred())
-				Expect(restarts).To(Equal(0))
+				if cfg.SoakClusterName == "" {
+					err = pod.Delete()
+					Expect(err).NotTo(HaveOccurred())
+					Expect(restarts).To(Equal(0))
+				} else {
+					log.Printf("%d DNS livenessProbe restarts since this cluster was created...\n", restarts)
+				}
 			}
 		})
 	})
@@ -761,12 +745,11 @@ var _ = Describe("Azure Container Cluster using the Kubernetes Orchestrator", fu
 				iisPods, err := iisDeploy.Pods()
 				Expect(err).NotTo(HaveOccurred())
 				Expect(len(iisPods)).ToNot(BeZero())
-				// BUG - https://github.com/Azure/acs-engine/issues/3143
-				// for _, iisPod := range iisPods {
-				// 	pass, err := iisPod.CheckWindowsOutboundConnection(10*time.Second, cfg.Timeout)
-				// 	Expect(err).NotTo(HaveOccurred())
-				// 	Expect(pass).To(BeTrue())
-				// }
+				for _, iisPod := range iisPods {
+					pass, err := iisPod.CheckWindowsOutboundConnection(10*time.Second, cfg.Timeout)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(pass).To(BeTrue())
+				}
 
 				err = iisDeploy.Delete()
 				Expect(err).NotTo(HaveOccurred())
@@ -774,6 +757,20 @@ var _ = Describe("Azure Container Cluster using the Kubernetes Orchestrator", fu
 				Expect(err).NotTo(HaveOccurred())
 			} else {
 				Skip("No windows agent was provisioned for this Cluster Definition")
+			}
+		})
+
+		It("Should not have any unready or crashing pods right after deployment", func() {
+			if eng.HasWindowsAgents() {
+				By("Checking ready status of each pod in kube-system")
+				pods, err := pod.GetAll("kube-system")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(len(pods.Pods)).ToNot(BeZero())
+				for _, currentPod := range pods.Pods {
+					log.Printf("Checking %s", currentPod.Metadata.Name)
+					Expect(currentPod.Status.ContainerStatuses[0].Ready).To(BeTrue())
+					Expect(currentPod.Status.ContainerStatuses[0].RestartCount).To(BeNumerically("<", 3))
+				}
 			}
 		})
 
@@ -812,9 +809,12 @@ var _ = Describe("Azure Container Cluster using the Kubernetes Orchestrator", fu
 				}
 			})*/
 
-		/*It("should be able to attach azure file", func() {
+		It("should be able to attach azure file", func() {
 			if eng.HasWindowsAgents() {
-				if common.IsKubernetesVersionGe(eng.ClusterDefinition.ContainerService.Properties.OrchestratorProfile.OrchestratorVersion, "1.8") {
+				if common.IsKubernetesVersionGe(eng.ClusterDefinition.ContainerService.Properties.OrchestratorProfile.OrchestratorVersion, "1.11") {
+					// Failure in 1.11+ - https://github.com/kubernetes/kubernetes/issues/65845
+					Skip("Kubernetes 1.11 has a known issue creating Azure PersistentVolumeClaims")
+				} else if common.IsKubernetesVersionGe(eng.ClusterDefinition.ContainerService.Properties.OrchestratorProfile.OrchestratorVersion, "1.8") {
 					storageclassName := "azurefile" // should be the same as in storageclass-azurefile.yaml
 					sc, err := storageclass.CreateStorageClassFromFile(filepath.Join(WorkloadDir, "storageclass-azurefile.yaml"), storageclassName)
 					Expect(err).NotTo(HaveOccurred())
@@ -848,6 +848,6 @@ var _ = Describe("Azure Container Cluster using the Kubernetes Orchestrator", fu
 			} else {
 				Skip("No windows agent was provisioned for this Cluster Definition")
 			}
-		})*/
+		})
 	})
 })
