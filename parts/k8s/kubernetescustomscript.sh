@@ -355,13 +355,11 @@ function installContainerd() {
 	sed -i '/\[Service\]/a ExecStartPost=\/sbin\/iptables -P FORWARD ACCEPT' /etc/systemd/system/containerd.service
 
 	echo "Successfully installed cri-containerd..."
-	if [[ "$CONTAINER_RUNTIME" == "clear-containers" ]] || [[ "$CONTAINER_RUNTIME" == "containerd" ]]; then
-		setupContainerd
-	fi
 }
 
 function ensureContainerd() {
 	if [[ "$CONTAINER_RUNTIME" == "clear-containers" ]] || [[ "$CONTAINER_RUNTIME" == "containerd" ]]; then
+        setupContainerd
 		# Enable and start cri-containerd service
 		# Make sure this is done after networking plugins are installed
 		echo "Enabling and starting cri-containerd service..."
@@ -528,9 +526,6 @@ if [ -f $CUSTOM_SEARCH_DOMAIN_SCRIPT ]; then
     $CUSTOM_SEARCH_DOMAIN_SCRIPT > /opt/azure/containers/setup-custom-search-domain.log 2>&1 || exit $ERR_CUSTOM_SEARCH_DOMAINS_FAIL
 fi
 
-# TODO: remove
-FULLINSTALL=true
-
 holdWALinuxAgent
 if $FULLINSTALL; then
     installDeps
@@ -546,8 +541,10 @@ fi
 
 configureK8s
 
+configNetworkPlugin
+
 if $FULLINSTALL; then
-    configNetworkPlugin
+    #configNetworkPlugin
 fi
 
 if [[ ! -z "${MASTER_NODE}" ]]; then
