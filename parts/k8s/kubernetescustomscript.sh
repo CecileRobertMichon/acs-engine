@@ -544,6 +544,7 @@ configureK8s
 configNetworkPlugin
 
 if $FULLINSTALL; then
+    echo "skipping configNetworkPlugin"
     #configNetworkPlugin
 fi
 
