@@ -138,9 +138,11 @@ func (uc *upgradeCmd) loadCluster(cmd *cobra.Command) error {
 			Locale: uc.locale,
 		},
 	}
+
+	// load the container service
 	uc.containerService, uc.apiVersion, err = apiloader.LoadContainerServiceFromFile(apiModelPath, true, true, nil)
 	if err != nil {
-		return errors.Wrap(err, "error parsing the api model")
+		return errors.Wrap(err, "Error parsing the api model")
 	}
 
 	if uc.containerService.Location == "" {
@@ -154,6 +156,7 @@ func (uc *upgradeCmd) loadCluster(cmd *cobra.Command) error {
 	if err != nil {
 		return errors.Wrap(err, "error getting list of available upgrades")
 	}
+
 	// add the current version if upgrade has failed
 	orchestratorInfo.Upgrades = append(orchestratorInfo.Upgrades, &api.OrchestratorProfile{
 		OrchestratorType:    uc.containerService.Properties.OrchestratorProfile.OrchestratorType,
@@ -169,7 +172,7 @@ func (uc *upgradeCmd) loadCluster(cmd *cobra.Command) error {
 		}
 	}
 	if !found {
-		return errors.Errorf("version %s is not supported", uc.upgradeVersion)
+		return errors.Errorf("Upgrading to version %s is not supported. Please choose one of the following upgrade versions: %v", uc.upgradeVersion, orchestratorInfo.Upgrades)
 	}
 
 	// Read name suffix to identify nodes in the resource group that belong
