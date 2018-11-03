@@ -132,7 +132,7 @@
           {
             "name": "block_outbound",
             "properties": {
-              "access": "Allow",
+              "access": "Deny",
               "description": "Block outbound internet from master",
               "destinationAddressPrefix": "*",
               "destinationPortRange": "*",
