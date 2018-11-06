@@ -87,7 +87,7 @@ spec:
    containers:
      - name: omsagent 
        image: "microsoft/oms"
-       imagePullPolicy: Always
+       imagePullPolicy: IfNotPresent
        env:
         - name: WSID
           valueFrom:

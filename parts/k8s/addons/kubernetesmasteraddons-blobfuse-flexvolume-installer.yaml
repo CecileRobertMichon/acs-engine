@@ -26,7 +26,7 @@ spec:
       containers:
       - name: blobfuse-flexvol-installer
         image: andyzhangx/blobfuse-flexvol-installer
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         resources:
           requests:
             cpu: <kubernetesBlobfuseFlexVolumeInstallerCPURequests>
