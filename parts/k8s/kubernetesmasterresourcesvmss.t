@@ -105,12 +105,12 @@
         "properties": {
           "access": "Allow",
           "description": "Allow outbound internet to vnet",
-          "destinationAddressPrefix": "VIRTUAL_NETWORK",
+          "destinationAddressPrefix": "[parameters('masterSubnet')]",
           "destinationPortRange": "*",
           "direction": "Outbound",
           "priority": 110,
           "protocol": "*",
-          "sourceAddressPrefix": "VIRTUAL_NETWORK",
+          "sourceAddressPrefix": "VirtualNetwork",
           "sourcePortRange": "*"
         }
       },
