@@ -130,6 +130,20 @@
             }
           },
           {
+            "name": "allow_vnet",
+            "properties": {
+              "access": "Allow",
+              "description": "Allow outbound internet to vnet",
+              "destinationAddressPrefix": "VIRTUAL_NETWORK",
+              "destinationPortRange": "*",
+              "direction": "Outbound",
+              "priority": 110,
+              "protocol": "*",
+              "sourceAddressPrefix": "VIRTUAL_NETWORK",
+              "sourcePortRange": "*"
+            }
+          },
+          {
             "name": "block_outbound",
             "properties": {
               "access": "Deny",
