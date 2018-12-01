@@ -34,12 +34,10 @@ rules:
   - namespaces
   - nodes
   - pods
-  - nodes/stats
   verbs:
   - get
   - list
   - watch
-  - create
 ---
 apiVersion: rbac.authorization.k8s.io/v1beta1
 kind: ClusterRoleBinding
@@ -127,7 +125,7 @@ spec:
             timeoutSeconds: 5
           command:
             - /heapster
-            - --source=kubernetes.summary_api:''?useServiceAccount=true&kubeletHttps=true&kubeletPort=10250&insecure=true
+            - --source=kubernetes.summary_api:''
         - image: <imgNanny>
           imagePullPolicy: IfNotPresent
           name: heapster-nanny
