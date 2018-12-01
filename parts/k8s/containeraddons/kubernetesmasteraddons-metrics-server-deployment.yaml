@@ -21,10 +21,12 @@ rules:
   - pods
   - nodes
   - namespaces
+  - nodes/stats
   verbs:
   - get
   - list
   - watch
+  - create
 - apiGroups:
   - "extensions"
   resources:
@@ -126,7 +128,7 @@ spec:
         imagePullPolicy: IfNotPresent
         command:
         - /metrics-server
-        - --source=kubernetes.summary_api:''
+        - --source=kubernetes.summary_api:''?useServiceAccount=true&kubeletHttps=true&kubeletPort=10250&insecure=true
       nodeSelector:
         beta.kubernetes.io/os: linux
 ---
